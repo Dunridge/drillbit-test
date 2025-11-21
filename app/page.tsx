@@ -1,52 +1,8 @@
 "use client";
 
-/*
-### Context
-
-You're building scheduling logic for a home plumbing service. Customers book a "Standard Plumbing Service" that takes 2 hours and can be performed by any available plumber.
-
-### Your Task
-
-Find all possible appointment slots for today.
-
-**Return:** All valid appointment slots with available employee count
-
-```json
-[
-  {"start_time": "08:00", "available_employees": 1},
-  {"start_time": "08:30", "available_employees": 1},
-  ...
-]
-```
-
-### Employee Busy Times
-
-```json
-[
-  {"employee_id": 1, "start_time": "08:00", "end_time": "09:30"},
-  {"employee_id": 1, "start_time": "10:00", "end_time": "11:30"},
-  {"employee_id": 1, "start_time": "12:00", "end_time": "13:30"},
-  {"employee_id": 1, "start_time": "14:00", "end_time": "17:00"},
-
-  {"employee_id": 2, "start_time": "08:00", "end_time": "10:00"},
-  {"employee_id": 2, "start_time": "11:00", "end_time": "13:00"},
-  {"employee_id": 2, "start_time": "15:00", "end_time": "17:00"},
-
-  {"employee_id": 3, "start_time": "09:00", "end_time": "11:00"},
-  {"employee_id": 3, "start_time": "14:00", "end_time": "17:00"},
-
-  {"employee_id": 4, "start_time": "11:00", "end_time": "13:00"}
-]
-```
-
-*/
-
 import { useEffect } from "react";
 
 const employeeBusyTimes = [
-  // each appt -- 2hr
-  // 8am - 5pm -- working hours
-  // appt in every 30m
   { employee_id: 1, start_time: "08:00", end_time: "09:30" },
   { employee_id: 1, start_time: "10:00", end_time: "11:30" },
   { employee_id: 1, start_time: "12:00", end_time: "13:30" },
@@ -63,101 +19,85 @@ const employeeBusyTimes = [
 ];
 
 export default function Home() {
-  /*
-  Output: 
-  [
-  {"start_time": "08:00", "available_employees": 1},
-  {"start_time": "08:30", "available_employees": 1},
-  ...
-  ]
-  */
-
   useEffect(() => {
-    const employeeBusyTimesInMilliseconds = employeeBusyTimes.map(
-      (timeRange) => ({
-        ...timeRange,
-        start_time: convertTimeStrToSeconds(timeRange.start_time),
-        end_time: convertTimeStrToSeconds(timeRange.end_time),
-      })
-    );
+    const startOfDay = 8 * 60; // 8:00am in minutes
+    const endOfDay = 17 * 60; // 5:00pm
+    const slotIncrement = 30; // 30 minutes
+    const appointmentDuration = 120; // 2 hours
 
-    // 8:00-17:00
-    const startInSeconds = convertTimeStrToSeconds("08:00");
-    const endInSeconds = convertTimeStrToSeconds("17:00");
-    const increment = convertTimeStrToSeconds("00:30");
-    const apptDuration = convertTimeStrToSeconds("02:00");
-    const employeeTimeSlotsInMilliseconds = [];
+    // Convert busy times to minutes
+    const busyTimesInMin = employeeBusyTimes.map((b) => ({
+      employee_id: b.employee_id,
+      start: timeStrToMin(b.start_time),
+      end: timeStrToMin(b.end_time),
+    }));
 
-    const busyByEmployee = new Map<
-      number,
-      { start_time: number; end_time: number }[]
-    >();
+    // Free intervals per employee
+    const freeByEmployee: Record<number, { start: number; end: number }[]> = {};
 
-    for (const b of employeeBusyTimesInMilliseconds) {
-      if (!busyByEmployee.has(b.employee_id))
-        busyByEmployee.set(b.employee_id, []);
-      busyByEmployee.get(b.employee_id)!.push(b);
+    for (const b of busyTimesInMin) {
+      if (!freeByEmployee[b.employee_id]) freeByEmployee[b.employee_id] = [];
     }
 
+    for (const employeeId of Object.keys(freeByEmployee).map(Number)) {
+      const busy = busyTimesInMin
+        .filter((b) => b.employee_id === employeeId)
+        .sort((a, z) => a.start - z.start);
+
+      let free: { start: number; end: number }[] = [];
+      let lastEnd = startOfDay;
+
+      for (const b of busy) {
+        if (b.start > lastEnd) free.push({ start: lastEnd, end: b.start });
+        lastEnd = Math.max(lastEnd, b.end);
+      }
+
+      if (lastEnd < endOfDay) free.push({ start: lastEnd, end: endOfDay });
+
+      freeByEmployee[employeeId] = free;
+    }
+
+    // Generate all slots
+    const slots: { start_time: string; available_employees: number }[] = [];
+
     for (
-      let time = startInSeconds;
-      time + apptDuration <= endInSeconds;
-      time += increment
+      let time = startOfDay;
+      time + appointmentDuration <= endOfDay;
+      time += slotIncrement
     ) {
-      let slotStart = time;
-      let slotEnd = time + apptDuration;
+      let availableCount = 0;
 
-      let availableEmployees = 0;
-
-      for (const [employeeId, blocks] of busyByEmployee.entries()) {
-        const isBusy = blocks.some(
-          (b) => b.start_time < slotEnd && b.end_time > slotStart
-        );
-
-        if (!isBusy) {
-          availableEmployees++;
+      for (const freeIntervals of Object.values(freeByEmployee)) {
+        if (
+          freeIntervals.some(
+            (f) => time >= f.start && time + appointmentDuration <= f.end
+          )
+        ) {
+          availableCount++;
         }
       }
 
-      employeeTimeSlotsInMilliseconds.push({
-        start_time: convertSecondsToTimeStr(time),
-        available_employees: availableEmployees,
-      });
+      if (availableCount > 0) {
+        slots.push({
+          start_time: minToTimeStr(time),
+          available_employees: availableCount,
+        });
+      }
     }
 
-    console.log(
-      "employeeTimeSlotsInMilliseconds",
-      employeeTimeSlotsInMilliseconds
-    );
-
-    // console.log(
-    //   "employeeBusyTimesInMilliseconds",
-    //   employeeBusyTimesInMilliseconds
-    // );
+    console.log(slots);
   }, []);
 
-  // "17:00"
-  const convertTimeStrToSeconds = (time: string) => {
-    const timeArr = time.split(":");
-    const hours = Number(timeArr[0]);
-    const minutes = Number(timeArr[1]);
-    const totalSeconds = hours * 3600 + minutes * 60;
-    return totalSeconds;
+  const timeStrToMin = (t: string) => {
+    const [h, m] = t.split(":").map(Number);
+    return h * 60 + m;
   };
 
-  const convertSecondsToTimeStr = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-
-    const hh = String(hours).padStart(2, "0");
-    const mm = String(minutes).padStart(2, "0");
-
+  const minToTimeStr = (m: number) => {
+    const hh = String(Math.floor(m / 60)).padStart(2, "0");
+    const mm = String(m % 60).padStart(2, "0");
     return `${hh}:${mm}`;
   };
 
-  return (
-    <div className="w-full flex justify-center">
-      <div>Drillbit</div>
-    </div>
-  );
+  return <div className="w-full flex justify-center">Drillbit</div>;
 }
